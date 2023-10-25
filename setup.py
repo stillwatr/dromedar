@@ -6,6 +6,5 @@ setup(
     description="A package with classes commonly required for creating and querying a database.",
     author="Cedric Stillwater",
     author_email="cedric.stillwater@gmail.com",
-    packages=["dromedar"],
-    install_requires=["dataset>=1.6.2", "psycopg2>=2.9.9"]
+    packages=["dromedar"]
 )
