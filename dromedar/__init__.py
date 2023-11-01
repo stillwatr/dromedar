@@ -5,8 +5,6 @@ import typing
 from dataset import types as db_types
 from typing import Annotated, Any
 
-# TODO: Implement column indexes.
-
 # ==================================================================================================
 
 
@@ -59,16 +57,13 @@ class Database:
 
     def __init__(
             self,
-            db_name: str,
-            db_user: str = "postgres",
-            db_password: str = "postgres",
-            db_host: str = "postgres",
-            db_port: int = 5432) -> None:
+            db_host_url: str,
+            db_name: str) -> None:
         """
         TODO
         """
         self.db: dataset.Database = dataset.connect(
-            url=f"postgresql://{db_user}:{db_password}@{db_host}:{db_port}/{db_name}",
+            url=f"{db_host_url}/{db_name}",
             ensure_schema=False
         )
 
@@ -183,3 +178,27 @@ class Database:
             return db_types.JSONB
 
         return db_types.String
+
+# ==================================================================================================
+
+
+class DatabasePool:
+    """
+    TODO
+    """
+
+    def __init__(self, db_host_url: str):
+        """
+        TODO
+        """
+        self.db_host_url: str = db_host_url
+        self.db_cache: dict[str, Database] = {}
+
+    def get_database(self, db_name: str, create_if_not_exists: bool = False) -> Database | None:
+        """
+        TODO
+        """
+        if db_name not in self.db_cache and create_if_not_exists:
+            self.db_cache[db_name] = Database(self.db_host_url, db_name)
+
+        return self.db_cache.get(db_name)
