@@ -106,6 +106,13 @@ class Database:
 
         return table
 
+    def drop(self) -> None:
+        """
+        TODO
+        """
+        for table in self.db.tables:
+            self.db[table].drop()
+
     # ----------------------------------------------------------------------------------------------
 
     def insert_one(self, entity: DbEntity) -> None:
@@ -193,6 +200,17 @@ class DatabasePool:
         """
         self.db_host_url: str = db_host_url
         self.db_cache: dict[str, Database] = {}
+
+    def create_database(self, db_name: str, drop_if_exists: bool = True) -> Database | None:
+        """
+        TODO
+        """
+        if db_name in self.db_cache and drop_if_exists:
+            self.db_cache.pop(db_name).drop()
+
+        self.db_cache[db_name] = Database(self.db_host_url, db_name)
+
+        return self.db_cache.get(db_name)
 
     def get_database(self, db_name: str, create_if_not_exists: bool = False) -> Database | None:
         """
