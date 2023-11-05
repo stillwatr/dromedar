@@ -8,7 +8,7 @@ setup(
     author_email="cedric.stillwater@gmail.com",
     packages=["dromedar"],
     install_requires=[
-      "dataset>=1.6.2",
+      "dataset @ git+https://github.com/stillwatr/dataset@master",
       "psycopg2-binary>=2.9.9",
       "PyYAML>=6.0.1"
     ]

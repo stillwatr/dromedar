@@ -1,2 +1,2 @@
-dataset==1.6.2
+dataset @ git+https://github.com/stillwatr/dataset@master
 psycopg2==2.9.9
