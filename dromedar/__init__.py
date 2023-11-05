@@ -18,9 +18,10 @@ class Database:
         """
         TODO
         """
-        print(f"connect to {db_host_url}/{db_name}")
+        print(f"[dromedar] connect to {db_host_url}/{db_name}")
         self.db: dataset.Database = dataset.connect(
             url=f"{db_host_url}/{db_name}",
+            create_if_not_exists=True,
             ensure_schema=False
         )
 
@@ -33,7 +34,6 @@ class Database:
         # Load the yml file.
         with path.open() as stream:
             yml = yaml.safe_load(stream)
-        print(yml)
 
         class_path = yml["class"]
         columns = yml["columns"]
@@ -48,7 +48,7 @@ class Database:
         class_type_hints = typing.get_type_hints(clazz)
 
         # If a table with the given name already exists, drop it.
-        table: dataset.Table = self.get_table(class_path)
+        table: dataset.Table = self.get_table(class_name)
         if table:
             if drop_if_exists:
                 table.drop()
@@ -56,14 +56,15 @@ class Database:
                 return table
 
         # Create the table and its columns.
-        table = self.db.create_table(class_path)
-        for name, column_spec in columns:
+        table = self.db.create_table(class_name)
+        for name, column_spec in columns.items():
+            column_spec = column_spec or {}
             type = self._map_type(column_spec.get("type", class_type_hints[name]))
             primary_key = column_spec.get("is_primary_key", False)
             unique = column_spec.get("unique", False)
-            nullable = column_spec.get("nullable", False)
+            nullable = column_spec.get("nullable", True)
             autoincrement = column_spec.get("autoincrement", False)
-            default = column_spec.get("default", False)
+            default = column_spec.get("default")
 
             table.create_column(
                 name=name,
@@ -82,10 +83,12 @@ class Database:
         # Create the indexes.
         indexes = yml.get("indexes")
         if indexes:
-            for index_name, index_spec in indexes:
+            for index_name, index_spec in indexes.items():
                 columns = index_spec["columns"]
                 postgresql_using = index_spec.get("postgresql_using")
                 postgresql_ops = index_spec.get("postgresql_ops")
+
+                print(f"index: {index_name}, {columns}")
 
                 table.create_index(
                     name=index_name,
@@ -100,8 +103,8 @@ class Database:
         """
         TODO
         """
-        for table in self.db.tables:
-            self.db[table].drop()
+        print("[dromedar] drop")
+        self.db.drop()
 
     # ----------------------------------------------------------------------------------------------
 
@@ -129,65 +132,21 @@ class Database:
         table_name = obj.__name__ if isinstance(obj, type) else type(obj).__name__
         return self.db[table_name] if self.db.has_table(table_name) else None
 
-    def _map_type(self, type: type) -> dataset.types:
+    def _map_type(self, type: type | str) -> dataset.types:
         """
         TODO
         """
-        if type is str:
+        if type is str or type == "str":
             return dataset.types.String
-        if type is bool:
+        if type is bool or type == "bool":
             return dataset.types.Boolean
-        if type is int:
+        if type is int or type == "int":
             return dataset.types.BigInteger
-        if type is float:
+        if type is float or type == "float":
             return dataset.types.Float
-        if type is datetime:
+        if type is datetime or type == "datetime":
             return dataset.types.DateTime
-        if type is dict:
+        if type is dict or type == "dict":
             return dataset.types.JSONB
 
         return dataset.types.String
-
-# ==================================================================================================
-
-
-class DatabasePool:
-    """
-    TODO
-    """
-
-    def __init__(self, db_host_url: str):
-        """
-        TODO
-        """
-        self.db_host_url: str = db_host_url
-        self.db_cache: dict[str, Database] = {}
-
-    def create_database(self, db_name: str, drop_if_exists: bool) -> Database | None:
-        """
-        TODO
-        """
-        print("CREATE DATABASE")
-        print(f"host: {self.db_host_url}")
-        print(f"name: {db_name}")
-        if db_name in self.db_cache:
-            if drop_if_exists:
-                print("DB already exists. Drop.")
-                self.db_cache.pop(db_name).drop()
-            else:
-                print("DB already exists.")
-                return self.db_cache[db_name]
-
-        print("Creating new DB.")
-        self.db_cache[db_name] = Database(self.db_host_url, db_name)
-
-        return self.db_cache.get(db_name)
-
-    def get_database(self, db_name: str, create_if_not_exists: bool = False) -> Database | None:
-        """
-        TODO
-        """
-        if db_name not in self.db_cache and create_if_not_exists:
-            self.db_cache[db_name] = Database(self.db_host_url, db_name)
-
-        return self.db_cache.get(db_name)
