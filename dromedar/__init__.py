@@ -1,51 +1,10 @@
 import dataset
+import dataset.types
 import datetime
+import importlib
+import pathlib
 import typing
-
-from dataset import types as db_types
-from typing import Annotated, Any
-
-# ==================================================================================================
-
-
-class DbColumn:
-    """
-    TODO
-    """
-    type: db_types
-    is_primary_key: bool
-    unique: bool
-    nullable: bool
-    autoincrement: bool
-    default: Any
-
-    def __init__(
-            self,
-            type: db_types = None,
-            is_primary_key: bool = False,
-            unique: bool = False,
-            nullable: bool = True,
-            autoincrement: bool = False,
-            default: Any = None):
-        """
-        TODO
-        """
-        self.type = type
-        self.is_primary_key = is_primary_key
-        self.unique = unique
-        self.nullable = nullable
-        self.autoincrement = autoincrement
-        self.default = default
-
-
-class DbEntity:
-    """
-    TODO
-    """
-    id: Annotated[str, DbColumn(is_primary_key=True)]
-
-    def __init__(self, id: str) -> None:
-        self.id = id
+import yaml
 
 # ==================================================================================================
 
@@ -55,54 +14,85 @@ class Database:
     TODO
     """
 
-    def __init__(
-            self,
-            db_host_url: str,
-            db_name: str) -> None:
+    def __init__(self, db_host_url: str, db_name: str) -> None:
         """
         TODO
         """
+        print(f"connect to {db_host_url}/{db_name}")
         self.db: dataset.Database = dataset.connect(
             url=f"{db_host_url}/{db_name}",
             ensure_schema=False
         )
 
-    def init_table(self, type: type[DbEntity], force_init: bool = False) -> dataset.Table:
+    def create_table_from_yml(self, path: pathlib.Path, drop_if_exists: bool) -> dataset.Table:
         """
         TODO
         """
-        if not type:
-            raise ValueError("no class given")
+        assert path, "no path to yml file given"
 
-        if not issubclass(type, DbEntity):
-            raise ValueError(f"class '{type.__name__}' is not a subclass of 'DbEntity'.")
+        # Load the yml file.
+        with path.open() as stream:
+            yml = yaml.safe_load(stream)
+        print(yml)
 
-        # Check if a table for storing entities of the given type already exists.
-        # If the user wants to force the init, drop the table. Otherwise, do nothing.
-        table: dataset.Table = self.get_table(type)
+        class_path = yml["class"]
+        columns = yml["columns"]
+
+        # Import the specified class.
+        # For example, for entry 'model: pigeon.models.User', import 'pigeon.models.User'.
+        class_path_components = class_path.split(".")
+        module_name = ".".join(class_path_components[:-1])  # pigeon.models
+        class_name = class_path_components[-1]  # User
+        module = importlib.import_module(module_name)
+        clazz = getattr(module, class_name)
+        class_type_hints = typing.get_type_hints(clazz)
+
+        # If a table with the given name already exists, drop it.
+        table: dataset.Table = self.get_table(class_path)
         if table:
-            if force_init:
+            if drop_if_exists:
                 table.drop()
             else:
                 return table
 
-        # Create the table.
-        table = self.db.create_table(type.__name__)
+        # Create the table and its columns.
+        table = self.db.create_table(class_path)
+        for name, column_spec in columns:
+            type = self._map_type(column_spec.get("type", class_type_hints[name]))
+            primary_key = column_spec.get("is_primary_key", False)
+            unique = column_spec.get("unique", False)
+            nullable = column_spec.get("nullable", False)
+            autoincrement = column_spec.get("autoincrement", False)
+            default = column_spec.get("default", False)
 
-        table_schema = self._compute_table_schema(type)
-        for name, column in table_schema.items():
             table.create_column(
                 name=name,
-                type=self._map_type(column.type),
-                primary_key=column.is_primary_key,
-                unique=column.unique,
-                nullable=column.nullable,
-                autoincrement=column.autoincrement,
-                default=column.default,
+                type=type,
+                primary_key=primary_key,
+                unique=unique,
+                nullable=nullable,
+                autoincrement=autoincrement,
+                default=default,
             )
 
-        table.create_column("ts_created", dataset.types.DateTime, nullable=False)
-        table.create_column("ts_modified", dataset.types.DateTime, nullable=False)
+        # Create a column for storing the creation and modification date of a row.
+        table.create_column("ts_created", dataset.types.DateTime)
+        table.create_column("ts_modified", dataset.types.DateTime)
+
+        # Create the indexes.
+        indexes = yml.get("indexes")
+        if indexes:
+            for index_name, index_spec in indexes:
+                columns = index_spec["columns"]
+                postgresql_using = index_spec.get("postgresql_using")
+                postgresql_ops = index_spec.get("postgresql_ops")
+
+                table.create_index(
+                    name=index_name,
+                    columns=columns,
+                    postgresql_using=postgresql_using,
+                    postgresql_ops=postgresql_ops,
+                )
 
         return table
 
@@ -115,76 +105,48 @@ class Database:
 
     # ----------------------------------------------------------------------------------------------
 
-    def insert_one(self, entity: DbEntity) -> None:
+    def insert_one(self, object: typing.Any) -> None:
         """
         TODO
         """
-        if not entity:
-            raise ValueError("no entity given")
+        assert object is not None, "no object given"
 
-        if not isinstance(entity, DbEntity):
-            raise ValueError("the object is not an instance of 'DbEntity'")
-
-        table = self.get_table(entity)
+        table = self.get_table(object)
         if table is None:
-            raise ValueError("no table exists for inserting the entity'")
+            raise ValueError("no table exists for storing the object'")
 
-        row = vars(entity)
+        row = vars(object)
         row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
 
         table.insert(row, ensure=False)
 
     # ----------------------------------------------------------------------------------------------
 
-    def get_table(self, obj: DbEntity | type[DbEntity]) -> dataset.Table:
+    def get_table(self, obj: typing.Any) -> dataset.Table:
         """
         TODO
         """
         table_name = obj.__name__ if isinstance(obj, type) else type(obj).__name__
         return self.db[table_name] if self.db.has_table(table_name) else None
 
-    # ----------------------------------------------------------------------------------------------
-
-    def _compute_table_schema(self, type: type[DbEntity]) -> dict[str, DbColumn]:
-        """
-        TODO
-        """
-        schema: dict[str, DbColumn] = {}
-
-        type_hints = typing.get_type_hints(type, include_extras=True)
-        for field_name, hint in type_hints.items():
-            if typing.get_origin(hint) is not Annotated:
-                continue
-
-            col_spec = next((m for m in hint.__metadata__ if isinstance(m, DbColumn)), None)
-            if not col_spec:
-                continue
-
-            if not col_spec.type:
-                col_spec.type = hint.__origin__
-
-            schema[field_name] = col_spec
-
-        return schema
-
-    def _map_type(self, type: type) -> db_types:
+    def _map_type(self, type: type) -> dataset.types:
         """
         TODO
         """
         if type is str:
-            return db_types.String
+            return dataset.types.String
         if type is bool:
-            return db_types.Boolean
+            return dataset.types.Boolean
         if type is int:
-            return db_types.BigInteger
+            return dataset.types.BigInteger
         if type is float:
-            return db_types.Float
+            return dataset.types.Float
         if type is datetime:
-            return db_types.DateTime
+            return dataset.types.DateTime
         if type is dict:
-            return db_types.JSONB
+            return dataset.types.JSONB
 
-        return db_types.String
+        return dataset.types.String
 
 # ==================================================================================================
 
@@ -201,13 +163,22 @@ class DatabasePool:
         self.db_host_url: str = db_host_url
         self.db_cache: dict[str, Database] = {}
 
-    def create_database(self, db_name: str, drop_if_exists: bool = True) -> Database | None:
+    def create_database(self, db_name: str, drop_if_exists: bool) -> Database | None:
         """
         TODO
         """
-        if db_name in self.db_cache and drop_if_exists:
-            self.db_cache.pop(db_name).drop()
+        print("CREATE DATABASE")
+        print(f"host: {self.db_host_url}")
+        print(f"name: {db_name}")
+        if db_name in self.db_cache:
+            if drop_if_exists:
+                print("DB already exists. Drop.")
+                self.db_cache.pop(db_name).drop()
+            else:
+                print("DB already exists.")
+                return self.db_cache[db_name]
 
+        print("Creating new DB.")
         self.db_cache[db_name] = Database(self.db_host_url, db_name)
 
         return self.db_cache.get(db_name)

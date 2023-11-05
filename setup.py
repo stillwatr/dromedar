@@ -9,6 +9,7 @@ setup(
     packages=["dromedar"],
     install_requires=[
       "dataset>=1.6.2",
-      "psycopg2-binary>=2.9.9"
+      "psycopg2-binary>=2.9.9",
+      "PyYAML>=6.0.1"
     ]
 )
