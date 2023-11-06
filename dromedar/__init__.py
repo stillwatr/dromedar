@@ -48,11 +48,17 @@ class Database:
         if not isinstance(columns, dict):
             raise ValueError(f"Wrong format of the 'columns' entry in yml file '{path}'.")
 
-        # Ensure that the key of each 'columns' entry is an attribute of the class.
-        class_type_hints = typing.get_type_hints(clazz)
+        # Iterate through each 'columns' entry to ensure that it is an attribute of the class
+        # and to identify the primary key.
+        type_hints = typing.get_type_hints(clazz)
+        primary_key: str = None
         for key in columns.keys():
-            if key not in class_type_hints:
+            if key not in type_hints:
                 raise ValueError(f"Class {class_path} has no attribute '{key}'.")
+
+            column_spec = columns.get(key) or {}
+            if column_spec.get("primary_key") is True:
+                primary_key = key
 
         # If a table for storing objects of the specified class already exists, drop it.
         table_name = clazz.__name__
@@ -64,17 +70,19 @@ class Database:
                 return table
 
         # Create the table and the columns.
-        table = self.db.create_table(table_name)
+        table = self.db.create_table(
+            table_name,
+            primary_id=primary_key,
+            primary_type=self.map_type(columns[primary_key].get("type", type_hints[primary_key]))
+        )
         for column_name, column_spec in columns.items():
             # If the entry does not contain a column_spec, use the default values.
             column_spec = column_spec or {}
 
             # If the column_spec doesn't provide a type, use the type specified in the class.
-            type = self.map_type(column_spec.get("type", class_type_hints[column_name]))
+            type = self.map_type(column_spec.get("type", type_hints[column_name]))
 
-            print(column_name, type)
-
-            primary_key = column_spec.get("primary_key", False)
+            is_primary_key = column_spec.get("primary_key", False)
             unique = column_spec.get("unique", False)
             nullable = column_spec.get("nullable", True)
             autoincrement = column_spec.get("autoincrement", False)
@@ -83,7 +91,7 @@ class Database:
             table.create_column(
                 name=column_name,
                 type=type,
-                primary_key=primary_key,
+                primary_key=is_primary_key,
                 unique=unique,
                 nullable=nullable,
                 autoincrement=autoincrement,
@@ -103,15 +111,15 @@ class Database:
                 if not columns:
                     raise ValueError(f"No columns for index '{index_name}' specified.")
 
-                postgresql_using = index_spec.get("postgresql_using")
-                postgresql_ops = index_spec.get("postgresql_ops")
+                kwargs = {}
 
-                table.create_index(
-                    name=index_name,
-                    columns=columns,
-                    postgresql_using=postgresql_using,
-                    postgresql_ops=postgresql_ops,
-                )
+                if "postgresql_using" in index_spec:
+                    kwargs["postgresql_using"] = index_spec["postgresql_using"]
+
+                if "postgresql_ops" in index_spec:
+                    kwargs["postgresql_ops"] = index_spec["postgresql_ops"]
+
+                table.create_index(name=index_name, columns=columns, **kwargs)
 
         return table
 
