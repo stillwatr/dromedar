@@ -72,6 +72,8 @@ class Database:
             # If the column_spec doesn't provide a type, use the type specified in the class.
             type = self.map_type(column_spec.get("type", class_type_hints[column_name]))
 
+            print(column_name, type)
+
             primary_key = column_spec.get("primary_key", False)
             unique = column_spec.get("unique", False)
             nullable = column_spec.get("nullable", True)
@@ -144,6 +146,25 @@ class Database:
         row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
 
         table.insert(row, ensure=False)
+
+    def insert_many(self, objects: list[typing.Any]) -> None:
+        """
+        TODO
+        """
+        assert objects, "no objects given"
+
+        table = self.get_table(objects[0])
+        if table is None:
+            raise ValueError(f"no table exists for storing objects of type '{type(objects[0])}'.")
+
+        rows = []
+        now = datetime.datetime.utcnow()
+        for object in objects:
+            row = vars(object)
+            row["ts_created"] = row["ts_modified"] = now
+            rows.append(row)
+
+        table.insert_many(rows, ensure=False)
 
     # ----------------------------------------------------------------------------------------------
 
