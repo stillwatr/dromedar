@@ -2,7 +2,6 @@ import dataset
 import dataset.types
 import datetime
 import importlib
-import pathlib
 import typing
 import yaml
 
@@ -14,40 +13,51 @@ class Database:
     TODO
     """
 
-    def __init__(self, db_host_url: str, db_name: str) -> None:
+    def __init__(self, db_host_url: str, db_name: str, create_if_not_exists: bool = True) -> None:
         """
         TODO
         """
-        print(f"[dromedar] connect to {db_host_url}/{db_name}")
         self.db: dataset.Database = dataset.connect(
             url=f"{db_host_url}/{db_name}",
-            create_if_not_exists=True,
+            create_if_not_exists=create_if_not_exists,
             ensure_schema=False
         )
 
-    def create_table_from_yml(self, path: pathlib.Path, drop_if_exists: bool) -> dataset.Table:
+    def create_table_from_yml(self, path: str, drop_if_exists: bool) -> dataset.Table:
         """
         TODO
         """
         assert path, "no path to yml file given"
 
         # Load the yml file.
-        with path.open() as stream:
+        with open(path, "r") as stream:
             yml = yaml.safe_load(stream)
 
-        class_path = yml["class"]
-        columns = yml["columns"]
+        class_path = yml.get("class")
+        if not class_path:
+            raise ValueError(f"The yml file '{path}' does not contain a 'class' entry.")
+
+        columns = yml.get("columns")
+        if not columns:
+            raise ValueError(f"The yml file '{path}' does not contain a 'columns' entry.")
+        if not isinstance(columns, dict):
+            raise ValueError(f"Wrong format of the 'columns' entry in yml file '{path}'.")
 
         # Import the specified class.
-        # For example, for entry 'model: pigeon.models.User', import 'pigeon.models.User'.
-        class_path_components = class_path.split(".")
-        module_name = ".".join(class_path_components[:-1])  # pigeon.models
-        class_name = class_path_components[-1]  # User
+        # For example, for entry 'class: pigeon.models.User', import 'pigeon.models.User'.
+        class_path_elements = class_path.split(".")
+        module_name = ".".join(class_path_elements[:-1])  # pigeon.models
+        class_name = class_path_elements[-1]              # User
         module = importlib.import_module(module_name)
         clazz = getattr(module, class_name)
         class_type_hints = typing.get_type_hints(clazz)
 
-        # If a table with the given name already exists, drop it.
+        # Ensure that the key of each 'columns' entry is an attribute of the class.
+        for key in columns.keys():
+            if not hasattr(clazz, key):
+                raise ValueError(f"Class {class_path} has no attribute '{key}'.")
+
+        # If a table for storing objects of the specified class already exists, drop it.
         table: dataset.Table = self.get_table(class_name)
         if table:
             if drop_if_exists:
@@ -55,19 +65,23 @@ class Database:
             else:
                 return table
 
-        # Create the table and its columns.
+        # Create the table and the columns.
         table = self.db.create_table(class_name)
-        for name, column_spec in columns.items():
+        for column_name, column_spec in columns.items():
+            # If the entry does not contain a column_spec, use the default values.
             column_spec = column_spec or {}
-            type = self._map_type(column_spec.get("type", class_type_hints[name]))
-            primary_key = column_spec.get("is_primary_key", False)
+
+            # If the column_spec doesn't provide a type, use the type specified in the class.
+            type = self.map_type(column_spec.get("type", class_type_hints[column_name]))
+
+            primary_key = column_spec.get("primary_key", False)
             unique = column_spec.get("unique", False)
             nullable = column_spec.get("nullable", True)
             autoincrement = column_spec.get("autoincrement", False)
             default = column_spec.get("default")
 
             table.create_column(
-                name=name,
+                name=column_name,
                 type=type,
                 primary_key=primary_key,
                 unique=unique,
@@ -76,7 +90,7 @@ class Database:
                 default=default,
             )
 
-        # Create a column for storing the creation and modification date of a row.
+        # Create two extra columns, for storing the creation and modification date.
         table.create_column("ts_created", dataset.types.DateTime)
         table.create_column("ts_modified", dataset.types.DateTime)
 
@@ -84,11 +98,13 @@ class Database:
         indexes = yml.get("indexes")
         if indexes:
             for index_name, index_spec in indexes.items():
-                columns = index_spec["columns"]
+                # Ensure a 'columns' entry exists.
+                columns = index_spec.get("columns")
+                if not columns:
+                    raise ValueError(f"No columns for index '{index_name}' specified.")
+
                 postgresql_using = index_spec.get("postgresql_using")
                 postgresql_ops = index_spec.get("postgresql_ops")
-
-                print(f"index: {index_name}, {columns}")
 
                 table.create_index(
                     name=index_name,
@@ -103,7 +119,6 @@ class Database:
         """
         TODO
         """
-        print("[dromedar] drop")
         self.db.drop()
 
     # ----------------------------------------------------------------------------------------------
@@ -116,7 +131,7 @@ class Database:
 
         table = self.get_table(object)
         if table is None:
-            raise ValueError("no table exists for storing the object'")
+            raise ValueError(f"no table exists for storing an object of type '{type(object)}'.")
 
         row = vars(object)
         row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
@@ -129,10 +144,14 @@ class Database:
         """
         TODO
         """
+        assert obj, "no object given"
+
         table_name = obj.__name__ if isinstance(obj, type) else type(obj).__name__
         return self.db[table_name] if self.db.has_table(table_name) else None
 
-    def _map_type(self, type: type | str) -> dataset.types:
+    # ----------------------------------------------------------------------------------------------
+
+    def map_type(self, type: type | str) -> dataset.types:
         """
         TODO
         """
