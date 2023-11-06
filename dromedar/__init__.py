@@ -49,8 +49,9 @@ class Database:
             raise ValueError(f"Wrong format of the 'columns' entry in yml file '{path}'.")
 
         # Ensure that the key of each 'columns' entry is an attribute of the class.
+        class_type_hints = typing.get_type_hints(clazz)
         for key in columns.keys():
-            if not hasattr(clazz, key):
+            if key not in class_type_hints:
                 raise ValueError(f"Class {class_path} has no attribute '{key}'.")
 
         # If a table for storing objects of the specified class already exists, drop it.
@@ -63,7 +64,6 @@ class Database:
 
         # Create the table and the columns.
         table = self.db.create_table(clazz)
-        class_type_hints = typing.get_type_hints(clazz)
         for column_name, column_spec in columns.items():
             # If the entry does not contain a column_spec, use the default values.
             column_spec = column_spec or {}
