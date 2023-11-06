@@ -23,10 +23,15 @@ class Database:
             ensure_schema=False
         )
 
-    def create_table_from_yml(self, path: str, drop_if_exists: bool) -> dataset.Table:
+    def create_table_from_yml(
+            self,
+            clazz: type,
+            path: str,
+            drop_if_exists: bool = True) -> dataset.Table:
         """
         TODO
         """
+        assert clazz, "no class given"
         assert path, "no path to yml file given"
 
         # Load the yml file.
@@ -43,22 +48,13 @@ class Database:
         if not isinstance(columns, dict):
             raise ValueError(f"Wrong format of the 'columns' entry in yml file '{path}'.")
 
-        # Import the specified class.
-        # For example, for entry 'class: pigeon.models.User', import 'pigeon.models.User'.
-        class_path_elements = class_path.split(".")
-        module_name = ".".join(class_path_elements[:-1])  # pigeon.models
-        class_name = class_path_elements[-1]              # User
-        module = importlib.import_module(module_name)
-        clazz = getattr(module, class_name)
-        class_type_hints = typing.get_type_hints(clazz)
-
         # Ensure that the key of each 'columns' entry is an attribute of the class.
         for key in columns.keys():
             if not hasattr(clazz, key):
                 raise ValueError(f"Class {class_path} has no attribute '{key}'.")
 
         # If a table for storing objects of the specified class already exists, drop it.
-        table: dataset.Table = self.get_table(class_name)
+        table: dataset.Table = self.get_table(clazz)
         if table:
             if drop_if_exists:
                 table.drop()
@@ -66,7 +62,8 @@ class Database:
                 return table
 
         # Create the table and the columns.
-        table = self.db.create_table(class_name)
+        table = self.db.create_table(clazz)
+        class_type_hints = typing.get_type_hints(clazz)
         for column_name, column_spec in columns.items():
             # If the entry does not contain a column_spec, use the default values.
             column_spec = column_spec or {}
@@ -136,7 +133,7 @@ class Database:
         """
         TODO
         """
-        assert object is not None, "no object given"
+        assert object, "no object given"
 
         table = self.get_table(object)
         if table is None:
