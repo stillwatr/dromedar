@@ -115,11 +115,20 @@ class Database:
 
         return table
 
+    # ----------------------------------------------------------------------------------------------
+
     def drop(self) -> None:
         """
         TODO
         """
         self.db.drop()
+
+    def drop_tables(self) -> None:
+        """
+        TODO
+        """
+        for table in self.db.tables:
+            self.db[table].drop()
 
     # ----------------------------------------------------------------------------------------------
 
