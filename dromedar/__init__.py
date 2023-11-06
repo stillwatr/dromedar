@@ -55,7 +55,8 @@ class Database:
                 raise ValueError(f"Class {class_path} has no attribute '{key}'.")
 
         # If a table for storing objects of the specified class already exists, drop it.
-        table: dataset.Table = self.get_table(clazz)
+        table_name = clazz.__name__
+        table: dataset.Table = self.get_table(table_name)
         if table:
             if drop_if_exists:
                 table.drop()
@@ -63,7 +64,7 @@ class Database:
                 return table
 
         # Create the table and the columns.
-        table = self.db.create_table(clazz)
+        table = self.db.create_table(table_name)
         for column_name, column_spec in columns.items():
             # If the entry does not contain a column_spec, use the default values.
             column_spec = column_spec or {}
