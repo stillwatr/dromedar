@@ -215,7 +215,7 @@ class Database:
                 row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
                 rows.append(row)
 
-            rows_debug = '\n '.join(rows)
+            rows_debug = '\n '.join([str(row) for row in rows])
             self.log.debug(f"insert_many | rows:\n{rows_debug}")
             table.insert_many(rows, ensure=False)
 
