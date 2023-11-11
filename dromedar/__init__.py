@@ -1,7 +1,7 @@
 import dataset
 import dataset.types
 import datetime
-import importlib
+import logging
 import typing
 import yaml
 
@@ -17,63 +17,79 @@ class Database:
         """
         TODO
         """
+        assert db_host_url, "no db host url given"
+        assert db_name, "no db name given"
+
+        self.log = logging.getLogger("dromedar")
+        self.log.debug(
+            f"init database '{db_name}' | "
+            f"db_host_url: '{db_host_url}', "
+            f"create_if_not_exists: {create_if_not_exists}"
+        )
         self.db: dataset.Database = dataset.connect(
             url=f"{db_host_url}/{db_name}",
             create_if_not_exists=create_if_not_exists,
             ensure_schema=False
         )
 
-    def create_table_from_yml(
-            self,
-            clazz: type,
-            path: str,
-            drop_if_exists: bool = True) -> dataset.Table:
+    def create_table_from_yml(self, clazz: type, path: str, drop: bool = True) -> dataset.Table:
         """
         TODO
         """
         assert clazz, "no class given"
         assert path, "no path to yml file given"
 
+        self.log.debug(f"creating table from yml | class: '{clazz}', path: '{path}', drop: {drop}")
+
         # Load the yml file.
         with open(path, "r") as stream:
             yml = yaml.safe_load(stream)
 
-        class_path = yml.get("class")
-        if not class_path:
-            raise ValueError(f"The yml file '{path}' does not contain a 'class' entry.")
-
         columns = yml.get("columns")
         if not columns:
-            raise ValueError(f"The yml file '{path}' does not contain a 'columns' entry.")
+            raise ValueError(f"yml file '{path}' does not contain a 'columns' entry")
         if not isinstance(columns, dict):
-            raise ValueError(f"Wrong format of the 'columns' entry in yml file '{path}'.")
+            raise ValueError(f"wrong format of the 'columns' entry in yml file '{path}'")
 
-        # Iterate through each 'columns' entry to ensure that it is an attribute of the class
-        # and to identify the primary key.
+        # Iterate through all 'columns' entries to find the primary key and to ensure that each
+        # the specified key is an attribute of the class.
         type_hints = typing.get_type_hints(clazz)
-        primary_key: str = None
+        primary_key: str | None = None
         for key in columns.keys():
             if key not in type_hints:
-                raise ValueError(f"Class {class_path} has no attribute '{key}'.")
+                raise ValueError(f"class '{clazz.__name__}' has no attribute '{key}'")
 
             column_spec = columns.get(key) or {}
             if column_spec.get("primary_key") is True:
                 primary_key = key
 
-        # If a table for storing objects of the specified class already exists, drop it.
+        # Check if a primary key is specified.
+        if primary_key is None:
+            raise ValueError("no primary key specified")
+        primary_type = self.map_type(columns[primary_key].get("type", type_hints[primary_key]))
+
+        # Check if a table for storing objects of the specified class already exists.
+        # Drop it when necessary.
         table_name = clazz.__name__
         table: dataset.Table = self.get_table(table_name)
         if table:
-            if drop_if_exists:
+            if drop:
+                self.log.debug(f"dropping table '{table_name}' (already exists)")
                 table.drop()
             else:
+                self.log.debug(f"table '{table_name}' already exists")
                 return table
 
         # Create the table and the columns.
+        self.log.debug(
+            f"creating table '{table_name}' | "
+            f"primary_key: '{primary_key}', "
+            f"primary_type: '{primary_type}'"
+        )
         table = self.db.create_table(
             table_name,
             primary_id=primary_key,
-            primary_type=self.map_type(columns[primary_key].get("type", type_hints[primary_key]))
+            primary_type=primary_type
         )
         for column_name, column_spec in columns.items():
             # If the entry does not contain a column_spec, use the default values.
@@ -81,17 +97,25 @@ class Database:
 
             # If the column_spec doesn't provide a type, use the type specified in the class.
             type = self.map_type(column_spec.get("type", type_hints[column_name]))
-
-            is_primary_key = column_spec.get("primary_key", False)
+            primary_key = column_spec.get("primary_key", False)
             unique = column_spec.get("unique", False)
             nullable = column_spec.get("nullable", True)
             autoincrement = column_spec.get("autoincrement", False)
             default = column_spec.get("default")
 
+            self.log.debug(
+                  f"creating column '{column_name}' | "
+                  f"type: '{type}', "
+                  f"primary_key: {primary_key}, "
+                  f"unique: {unique}, "
+                  f"nullable: {nullable}, "
+                  f"autoincrement: {autoincrement}, "
+                  f"default: {default}"
+            )
             table.create_column(
                 name=column_name,
                 type=type,
-                primary_key=is_primary_key,
+                primary_key=primary_key,
                 unique=unique,
                 nullable=nullable,
                 autoincrement=autoincrement,
@@ -102,23 +126,30 @@ class Database:
         table.create_column("ts_created", dataset.types.DateTime)
         table.create_column("ts_modified", dataset.types.DateTime)
 
-        # Create the indexes.
+        # Create the indexes if necessary.
         indexes = yml.get("indexes")
         if indexes:
             for index_name, index_spec in indexes.items():
                 # Ensure a 'columns' entry exists.
                 columns = index_spec.get("columns")
                 if not columns:
-                    raise ValueError(f"No columns for index '{index_name}' specified.")
+                    raise ValueError(f"no columns for index '{index_name}' specified")
 
                 kwargs = {}
 
-                if "postgresql_using" in index_spec:
-                    kwargs["postgresql_using"] = index_spec["postgresql_using"]
+                postgresql_using = index_spec.get("postgresql_using")
+                if postgresql_using:
+                    kwargs["postgresql_using"] = postgresql_using
 
-                if "postgresql_ops" in index_spec:
-                    kwargs["postgresql_ops"] = index_spec["postgresql_ops"]
+                postgresql_ops = index_spec.get("postgresql_ops")
+                if postgresql_ops:
+                    kwargs["postgresql_ops"] = postgresql_ops
 
+                self.log.debug(
+                    f"creating index '{index_name}' | "
+                    f"columns: {columns}, "
+                    f"kwargs: {kwargs}"
+                )
                 table.create_index(name=index_name, columns=columns, **kwargs)
 
         return table
@@ -129,12 +160,14 @@ class Database:
         """
         TODO
         """
+        self.log.debug("dropping database")
         self.db.drop()
 
     def drop_tables(self) -> None:
         """
         TODO
         """
+        self.log.debug("dropping tables")
         for table in self.db.tables:
             self.db[table].drop()
 
@@ -148,11 +181,12 @@ class Database:
 
         table = self.get_table(object)
         if table is None:
-            raise ValueError(f"no table exists for storing an object of type '{type(object)}'.")
+            raise ValueError(f"no table exists for storing objects of type '{type(object)}'.")
 
         row = vars(object)
         row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
 
+        self.log.debug(f"insert_one | row: {row}")
         table.insert(row, ensure=False)
 
     def insert_many(self, objects: list[typing.Any]) -> None:
@@ -161,18 +195,29 @@ class Database:
         """
         assert objects, "no objects given"
 
-        table = self.get_table(objects[0])
-        if table is None:
-            raise ValueError(f"no table exists for storing objects of type '{type(objects[0])}'.")
-
-        rows = []
-        now = datetime.datetime.utcnow()
+        # Group the objects per type.
+        objects_per_type: dict[type, typing.Any] = {}
         for object in objects:
-            row = vars(object)
-            row["ts_created"] = row["ts_modified"] = now
-            rows.append(row)
+            if type(object) not in objects_per_type:
+                objects_per_type[type(object)] = [object]
+            else:
+                objects_per_type[type(object)].append(object)
 
-        table.insert_many(rows, ensure=False)
+        # Insert the objects in the database.
+        for typ, objects in objects_per_type.items():
+            table = self.get_table(typ)
+            if table is None:
+                raise ValueError(f"no table exists for storing objects of type '{typ}'.")
+
+            rows = []
+            for object in objects:
+                row = vars(object)
+                row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
+                rows.append(row)
+
+            rows_debug = '\n '.join(rows)
+            self.log.debug(f"insert_many | rows:\n{rows_debug}")
+            table.insert_many(rows, ensure=False)
 
     # ----------------------------------------------------------------------------------------------
 
