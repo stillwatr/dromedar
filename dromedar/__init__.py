@@ -2,6 +2,7 @@ import dataset
 import dataset.types
 import datetime
 import logging
+import psycopg2
 import typing
 import yaml
 
@@ -119,7 +120,7 @@ class Database:
                 unique=unique,
                 nullable=nullable,
                 autoincrement=autoincrement,
-                default=default,
+                default=default
             )
 
         # Create two extra columns, for storing the creation and modification date.
@@ -173,7 +174,7 @@ class Database:
 
     # ----------------------------------------------------------------------------------------------
 
-    def insert_one(self, object: typing.Any) -> None:
+    def insert_one(self, object: typing.Any, exists_ok: bool = False) -> None:
         """
         TODO
         """
@@ -187,7 +188,12 @@ class Database:
         row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
 
         self.log.debug(f"insert_one | row: {row}")
-        table.insert(row, ensure=False)
+        try:
+            table.insert(row, ensure=False)
+        except Exception as e:
+            # FIXME: Better error handling.
+            if "already exists" not in str(e) or not exists_ok:
+                raise e
 
     def insert_many(self, objects: list[typing.Any]) -> None:
         """
