@@ -13,7 +13,7 @@ class Database:
     TODO
     """
 
-    def __init__(self, db_host_url: str, db_name: str, create_if_not_exists: bool = True) -> None:
+    def __init__(self, db_host_url: str, db_name: str) -> None:
         """
         TODO
         """
@@ -21,14 +21,9 @@ class Database:
         assert db_name, "no db name given"
 
         self.log = logging.getLogger("dromedar")
-        self.log.debug(
-            f"init db '{db_name}' | "
-            f"db_host_url: '{db_host_url}', "
-            f"create_if_not_exists: {create_if_not_exists}"
-        )
+        self.log.debug(f"init db '{db_name}' | db_host_url: '{db_host_url}'")
         self.db: dataset.Database = dataset.connect(
             url=f"{db_host_url}/{db_name}",
-            create_if_not_exists=create_if_not_exists,
             ensure_schema=False
         )
 
@@ -152,6 +147,19 @@ class Database:
 
     # ----------------------------------------------------------------------------------------------
 
+    def create(self):
+        """
+        TODO
+        """
+        self.log.debug("creating database")
+        return self.db.create()
+
+    def exists(self) -> bool:
+        """
+        TODO
+        """
+        return self.db.exists()
+
     def drop(self) -> None:
         """
         TODO
@@ -189,7 +197,7 @@ class Database:
         """
         TODO
         """
-        assert objects, "no objects given"
+        assert objects is not None, "no objects given"
 
         # Group the objects per type.
         objects_per_type: dict[type, typing.Any] = {}
@@ -214,6 +222,29 @@ class Database:
             rows_debug = '\n '.join([str(row) for row in rows])
             self.log.debug(f"insert_many | rows:\n{rows_debug}")
             table.insert_many(rows, ensure=False)
+
+    # ----------------------------------------------------------------------------------------------
+
+    def get_one(self, clazz: type, *_clauses, **kwargs) -> typing.Any:
+        """
+        TODO
+        """
+        assert clazz, "no class given"
+
+        # When no table for the given class exists, return nothing.
+        table = self.get_table(clazz)
+        if not table:
+            return None
+
+        # Find the first row matching the specified clauses and arguments.
+        row = table.find_one(*_clauses, **kwargs)
+        if not row:
+            return None
+
+        obj = clazz()
+        for key in row:
+            setattr(obj, key, row[key])
+        return obj
 
     # ----------------------------------------------------------------------------------------------
 
