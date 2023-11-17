@@ -22,7 +22,7 @@ class Database:
 
         self.log = logging.getLogger("dromedar")
         self.log.debug(
-            f"init database '{db_name}' | "
+            f"init db '{db_name}' | "
             f"db_host_url: '{db_host_url}', "
             f"create_if_not_exists: {create_if_not_exists}"
         )
@@ -59,7 +59,8 @@ class Database:
             if key not in type_hints:
                 raise ValueError(f"class '{clazz}' has no attribute '{key}'")
 
-            if columns.get(key, {}).get("primary_key"):
+            column_spec = columns.get(key) or {}
+            if column_spec.get("primary_key") is True:
                 primary_key = key
 
         # Abort if no primary key is specified.
