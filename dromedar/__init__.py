@@ -2,7 +2,6 @@ import dataset
 import dataset.types
 import datetime
 import logging
-import psycopg2
 import typing
 import yaml
 
@@ -52,25 +51,25 @@ class Database:
         if not isinstance(columns, dict):
             raise ValueError(f"wrong format of the 'columns' entry in yml file '{path}'")
 
-        # Iterate through all 'columns' entries to find the primary key and to ensure that each
-        # the specified key is an attribute of the class.
+        # Iterate through all columns entries to find the primary key and to ensure that each
+        # specified key is an attribute of the class.
         type_hints = typing.get_type_hints(clazz)
-        primary_key: str | None = None
+        primary_key = None
         for key in columns.keys():
             if key not in type_hints:
-                raise ValueError(f"class '{clazz.__name__}' has no attribute '{key}'")
+                raise ValueError(f"class '{clazz}' has no attribute '{key}'")
 
-            column_spec = columns.get(key) or {}
-            if column_spec.get("primary_key") is True:
+            if columns.get(key, {}).get("primary_key"):
                 primary_key = key
 
-        # Check if a primary key is specified.
+        # Abort if no primary key is specified.
         if primary_key is None:
             raise ValueError("no primary key specified")
+
+        # Obtain the type of the primary column.
         primary_type = self.map_type(columns[primary_key].get("type", type_hints[primary_key]))
 
-        # Check if a table for storing objects of the specified class already exists.
-        # Drop it when necessary.
+        # Check if a table for storing objects of the class already exists. Drop it when necessary.
         table_name = clazz.__name__
         table: dataset.Table = self.get_table(table_name)
         if table:
@@ -78,7 +77,7 @@ class Database:
                 self.log.debug(f"dropping table '{table_name}' (already exists)")
                 table.drop()
             else:
-                self.log.debug(f"table '{table_name}' already exists")
+                self.log.debug(f"nothing to do (table '{table_name}' already exists)")
                 return table
 
         # Create the table and the columns.
@@ -87,16 +86,11 @@ class Database:
             f"primary_key: '{primary_key}', "
             f"primary_type: '{primary_type}'"
         )
-        table = self.db.create_table(
-            table_name,
-            primary_id=primary_key,
-            primary_type=primary_type
-        )
+        table = self.db.create_table(table_name, primary_key, primary_type)
         for column_name, column_spec in columns.items():
-            # If the entry does not contain a column_spec, use the default values.
-            column_spec = column_spec or {}
+            column_spec = column_spec or {}  # Ensure that column_spec is not None.
 
-            # If the column_spec doesn't provide a type, use the type specified in the class.
+            # If no column_spec is specified, use the default values.
             type = self.map_type(column_spec.get("type", type_hints[column_name]))
             primary_key = column_spec.get("primary_key", False)
             unique = column_spec.get("unique", False)
@@ -174,7 +168,7 @@ class Database:
 
     # ----------------------------------------------------------------------------------------------
 
-    def insert_one(self, object: typing.Any, exists_ok: bool = False) -> None:
+    def insert_one(self, object: typing.Any) -> None:
         """
         TODO
         """
@@ -188,12 +182,7 @@ class Database:
         row["ts_created"] = row["ts_modified"] = datetime.datetime.utcnow()
 
         self.log.debug(f"insert_one | row: {row}")
-        try:
-            table.insert(row, ensure=False)
-        except Exception as e:
-            # FIXME: Better error handling.
-            if "already exists" not in str(e) or not exists_ok:
-                raise e
+        table.insert(row, ensure=False)
 
     def insert_many(self, objects: list[typing.Any]) -> None:
         """
